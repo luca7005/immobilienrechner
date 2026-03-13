@@ -198,6 +198,7 @@ export default function Page() {
   const [annualExtraPayment, setAnnualExtraPayment] = useState("0");
   const [manualMonthlyPayment, setManualMonthlyPayment] = useState("");
 
+  const [scenarioMode, setScenarioMode] = useState<"full" | "fixed">("full");
   const [fixedYears, setFixedYears] = useState("10");
   const [targetBalance, setTargetBalance] = useState("0");
 
@@ -233,11 +234,12 @@ export default function Page() {
 
     const fullRepaymentMonths = calculateFullRepaymentMonths(loan, z, monthlyRate, extra);
     const fixedTermMonthlyPayment = calculateRequiredMonthlyPayment(loan, z, years, balloon);
+    const effectiveMonthlyRate = scenarioMode === "fixed" ? fixedTermMonthlyPayment : monthlyRate;
 
     const preview = simulateYears({
       loanAmount: loan,
       annualRate: z,
-      monthlyPayment: monthlyRate,
+      monthlyPayment: effectiveMonthlyRate,
       annualExtraPayment: extra,
       years,
       rentNetAnnual: rentAnnual,
@@ -266,6 +268,7 @@ export default function Page() {
       projectCost,
       loan,
       monthlyRate,
+      effectiveMonthlyRate,
       fullRepaymentMonths,
       fixedTermMonthlyPayment,
       years,
@@ -296,6 +299,7 @@ export default function Page() {
     monthlyReserve,
     depreciationAnnual,
     personalTaxRate,
+    scenarioMode,
   ]);
 
   const card: React.CSSProperties = {
@@ -383,6 +387,13 @@ export default function Page() {
               <input style={input} value={manualMonthlyPayment} onChange={(e) => setManualMonthlyPayment(e.target.value)} onFocus={handleFocus(setManualMonthlyPayment)} onBlur={handleBlur(setManualMonthlyPayment)} />
             </div>
             <div style={{ marginBottom: 14 }}>
+              <label style={label}>Szenario</label>
+              <select style={input} value={scenarioMode} onChange={(e) => setScenarioMode(e.target.value as "full" | "fixed")}>
+                <option value="full">Volltilgung berechnen</option>
+                <option value="fixed">Feste Dauer mit Restschuld</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: 14 }}>
               <label style={label}>Vorgabedauer in Jahren</label>
               <input style={input} value={fixedYears} onChange={(e) => setFixedYears(e.target.value)} />
             </div>
@@ -420,7 +431,7 @@ export default function Page() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 20, marginTop: 20 }}>
           <div style={card}><div style={{ color: "#6b7280" }}>Gesamtprojektkosten</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.projectCost)}</div></div>
           <div style={card}><div style={{ color: "#6b7280" }}>Darlehen</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.loan)}</div></div>
-          <div style={card}><div style={{ color: "#6b7280" }}>Monatsrate aktuell</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.monthlyRate)}</div></div>
+          <div style={card}><div style={{ color: "#6b7280" }}>Monatsrate aktuell</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.effectiveMonthlyRate)}</div><div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>{scenarioMode === "fixed" ? "aus fester Dauer berechnet" : "aus Zins + Tilgung"}</div></div>
           <div style={card}><div style={{ color: "#6b7280" }}>Gesamtlaufzeit bis 0 € Restschuld</div><div style={{ fontSize: 26, fontWeight: 700 }}>{yearsMonths(calc.fullRepaymentMonths)}</div></div>
           <div style={card}><div style={{ color: "#6b7280" }}>Rate für {calc.years} Jahre</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.fixedTermMonthlyPayment)}</div><div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>mit Restschuld {euro(calc.balloon)}</div></div>
           <div style={card}><div style={{ color: "#6b7280" }}>Steuerpflichtige Mieteinnahmen Jahr 1</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.taxableRentalYear1)}</div></div>
@@ -452,10 +463,11 @@ export default function Page() {
           <div style={card}>
             <h2 style={{ marginTop: 0 }}>Interpretation</h2>
             <div style={{ display: "grid", gap: 12 }}>
-              <div><strong>Ohne Schlussrate:</strong> Dann ist für dich die relevante Kennzahl die vollständige Laufzeit bis 0 € Restschuld.</div>
-              <div><strong>Mit 10 Jahren Vorgabe:</strong> Dann zeigt dir der Rechner, welche Rate nötig ist, um nach 10 Jahren genau die gewünschte Restschuld offen zu lassen.</div>
+              <div><strong>Modus Volltilgung:</strong> Dann ist für dich die relevante Kennzahl die vollständige Laufzeit bis 0 € Restschuld.</div>
+              <div><strong>Modus feste Dauer:</strong> Dann zeigt dir der Rechner, welche Rate nötig ist, um nach 10 Jahren genau die gewünschte Restschuld offen zu lassen.</div>
               <div><strong>Zu versteuern:</strong> Vereinfacht = Netto-Mieteinnahmen minus nicht umlagefähige Kosten minus Zinsen minus AfA.</div>
               <div><strong>Nicht enthalten:</strong> Leerstand wurde auf Wunsch entfernt.</div>
+              <div><strong>Aktives Szenario:</strong> {scenarioMode === "fixed" ? "Feste Dauer mit Restschuld" : "Volltilgung"}</div>
             </div>
           </div>
         </div>
