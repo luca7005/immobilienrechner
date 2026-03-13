@@ -1,318 +1,315 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 
-function euro(value: number) {
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(value);
+function euro(value: number) { return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2, }).format(value); }
+
+function num(value: number, digits = 2) { return new Intl.NumberFormat("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits, }).format(value); }
+
+type Row = { month: number; year: number; payment: number; interest: number; principal: number; extra: number; balance: number; };
+
+function amortize({ loanAmount, annualRate, monthlyPayment, annualExtraPayment, }: { loanAmount: number; annualRate: number; monthlyPayment: number; annualExtraPayment: number; }) { const monthlyRate = annualRate / 100 / 12; let balance = Math.max(0, loanAmount); let month = 0; let totalInterest = 0; let totalPayment = 0; const rows: Row[] = [];
+
+if (balance <= 0) { return { rows, months: 0, totalInterest: 0, totalPayment: 0, repaid: true, }; }
+
+if (monthlyPayment <= balance * monthlyRate) { return { rows, months: Infinity, totalInterest: Infinity, totalPayment: Infinity, repaid: false, }; }
+
+while (balance > 0.01 && month < 1440) { month += 1; const interest = balance * monthlyRate; let principal = monthlyPayment - interest;
+
+if (principal > balance) principal = balance;
+
+let payment = interest + principal;
+balance -= principal;
+
+let extra = 0;
+if (annualExtraPayment > 0 && month % 12 === 0 && balance > 0) {
+  extra = Math.min(annualExtraPayment, balance);
+  balance -= extra;
 }
 
-function percent(value: number) {
-  return `${value.toFixed(2)} %`;
+totalInterest += interest;
+totalPayment += payment + extra;
+
+rows.push({
+  month,
+  year: Math.ceil(month / 12),
+  payment,
+  interest,
+  principal,
+  extra,
+  balance: Math.max(0, balance),
+});
+
 }
 
-export default function Page() {
-  const [kaufpreis, setKaufpreis] = useState(320000);
-  const [nebenkostenProzent, setNebenkostenProzent] = useState(10);
-  const [renovierung, setRenovierung] = useState(15000);
-  const [eigenkapital, setEigenkapital] = useState(70000);
-  const [zins, setZins] = useState(3.8);
-  const [tilgung, setTilgung] = useState(2.0);
+return { rows, months: month, totalInterest, totalPayment, repaid: balance <= 0.01, }; }
 
-  const [kaltmieteMonat, setKaltmieteMonat] = useState(1150);
-  const [nichtUmlagefaehigMonat, setNichtUmlagefaehigMonat] = useState(85);
-  const [ruecklageMonat, setRuecklageMonat] = useState(45);
-  const [leerstandProzent, setLeerstandProzent] = useState(2);
+export default function Page() { const [purchasePrice, setPurchasePrice] = useState(320000); const [purchaseCostsPercent, setPurchaseCostsPercent] = useState(10); const [renovation, setRenovation] = useState(15000); const [equity, setEquity] = useState(70000);
 
-  const calc = useMemo(() => {
-    const nebenkosten = kaufpreis * (nebenkostenProzent / 100);
-    const gesamtProjektkosten = kaufpreis + nebenkosten + renovierung;
-    const darlehen = Math.max(0, gesamtProjektkosten - eigenkapital);
+const [annualRate, setAnnualRate] = useState(3.8); const [initialRepayment, setInitialRepayment] = useState(2.0); const [annualExtraPayment, setAnnualExtraPayment] = useState(0); const [manualMonthlyPayment, setManualMonthlyPayment] = useState(0); const [calculationMode, setCalculationMode] = useState<"rate" | "duration">("duration"); const [targetYears, setTargetYears] = useState(30);
 
-    const monatlicheRate = darlehen * ((zins + tilgung) / 100) / 12;
+const [monthlyRentCold, setMonthlyRentCold] = useState(1150); const [monthlyNonApportionableCosts, setMonthlyNonApportionableCosts] = useState(85); const [monthlyReserve, setMonthlyReserve] = useState(45); const [vacancyPercent, setVacancyPercent] = useState(2);
 
-    const jahresKaltmiete = kaltmieteMonat * 12;
-    const leerstandAbzug = jahresKaltmiete * (leerstandProzent / 100);
-    const nettoMieteNachLeerstand = jahresKaltmiete - leerstandAbzug;
+const result = useMemo(() => { const purchaseCosts = purchasePrice * (purchaseCostsPercent / 100); const projectCost = purchasePrice + purchaseCosts + renovation; const loanAmount = Math.max(0, projectCost - equity);
 
-    const eigentuemerKostenJahr =
-      nichtUmlagefaehigMonat * 12 + ruecklageMonat * 12;
+let monthlyPayment = 0;
 
-    const jahresRate = monatlicheRate * 12;
-    const cashflowVorSteuer =
-      nettoMieteNachLeerstand - eigentuemerKostenJahr - jahresRate;
+if (calculationMode === "duration") {
+  monthlyPayment = loanAmount * ((annualRate + initialRepayment) / 100) / 12;
+  if (manualMonthlyPayment > 0) {
+    monthlyPayment = manualMonthlyPayment;
+  }
+} else {
+  const months = Math.max(1, Math.round(targetYears * 12));
+  const monthlyRate = annualRate / 100 / 12;
+  if (monthlyRate === 0) {
+    monthlyPayment = loanAmount / months;
+  } else {
+    monthlyPayment = loanAmount * monthlyRate / (1 - Math.pow(1 + monthlyRate, -months));
+  }
+}
 
-    const bruttoRendite =
-      kaufpreis > 0 ? (jahresKaltmiete / kaufpreis) * 100 : 0;
+const sim = amortize({
+  loanAmount,
+  annualRate,
+  monthlyPayment,
+  annualExtraPayment,
+});
 
-    const nettoRendite =
-      gesamtProjektkosten > 0
-        ? ((nettoMieteNachLeerstand - eigentuemerKostenJahr) /
-            gesamtProjektkosten) *
-          100
-        : 0;
+const years = Number.isFinite(sim.months) ? Math.floor(sim.months / 12) : Infinity;
+const remainingMonths = Number.isFinite(sim.months) ? sim.months % 12 : Infinity;
 
-    const eigenkapitalQuote =
-      gesamtProjektkosten > 0 ? (eigenkapital / gesamtProjektkosten) * 100 : 0;
+const annualColdRent = monthlyRentCold * 12;
+const annualVacancy = annualColdRent * (vacancyPercent / 100);
+const annualNetRent = annualColdRent - annualVacancy;
+const annualOwnerCosts = monthlyNonApportionableCosts * 12 + monthlyReserve * 12;
+const annualDebtService = Number.isFinite(monthlyPayment) ? monthlyPayment * 12 + annualExtraPayment : Infinity;
+const cashflowBeforeTax = annualNetRent - annualOwnerCosts - annualDebtService;
 
-    return {
-      nebenkosten,
-      gesamtProjektkosten,
-      darlehen,
-      monatlicheRate,
-      jahresRate,
-      jahresKaltmiete,
-      nettoMieteNachLeerstand,
-      eigentuemerKostenJahr,
-      cashflowVorSteuer,
-      bruttoRendite,
-      nettoRendite,
-      eigenkapitalQuote,
-    };
-  }, [
-    kaufpreis,
-    nebenkostenProzent,
-    renovierung,
-    eigenkapital,
-    zins,
-    tilgung,
-    kaltmieteMonat,
-    nichtUmlagefaehigMonat,
-    ruecklageMonat,
-    leerstandProzent,
-  ]);
+const grossYield = purchasePrice > 0 ? (annualColdRent / purchasePrice) * 100 : 0;
+const netYield = projectCost > 0 ? ((annualNetRent - annualOwnerCosts) / projectCost) * 100 : 0;
 
-  const cardStyle: React.CSSProperties = {
-    background: "white",
-    borderRadius: 16,
-    padding: 20,
-    boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
-  };
+const yearlyRows = sim.rows.reduce((acc: Array<{
+  year: number;
+  payment: number;
+  interest: number;
+  principal: number;
+  extra: number;
+  balance: number;
+}>, row) => {
+  const existing = acc.find((x) => x.year === row.year);
+  if (existing) {
+    existing.payment += row.payment;
+    existing.interest += row.interest;
+    existing.principal += row.principal;
+    existing.extra += row.extra;
+    existing.balance = row.balance;
+  } else {
+    acc.push({
+      year: row.year,
+      payment: row.payment,
+      interest: row.interest,
+      principal: row.principal,
+      extra: row.extra,
+      balance: row.balance,
+    });
+  }
+  return acc;
+}, []);
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: 10,
-    borderRadius: 10,
-    border: "1px solid #d1d5db",
-    fontSize: 16,
-    boxSizing: "border-box",
-  };
+return {
+  purchaseCosts,
+  projectCost,
+  loanAmount,
+  monthlyPayment,
+  years,
+  remainingMonths,
+  annualDebtService,
+  cashflowBeforeTax,
+  annualColdRent,
+  annualNetRent,
+  annualOwnerCosts,
+  grossYield,
+  netYield,
+  ...sim,
+  yearlyRows,
+};
 
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    marginBottom: 6,
-    fontWeight: 600,
-  };
+}, [ purchasePrice, purchaseCostsPercent, renovation, equity, annualRate, initialRepayment, annualExtraPayment, manualMonthlyPayment, calculationMode, targetYears, monthlyRentCold, monthlyNonApportionableCosts, monthlyReserve, vacancyPercent, ]);
 
-  return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f3f4f6",
-        padding: 20,
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 34, marginBottom: 8 }}>
-          Immobilien- & Baufinanzierungsrechner
-        </h1>
-        <p style={{ color: "#4b5563", marginBottom: 24 }}>
-          Für Kauf, Finanzierung und Vermietung.
-        </p>
+const card: React.CSSProperties = { background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 2px 14px rgba(0,0,0,0.08)", };
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-            gap: 20,
-            marginBottom: 20,
-          }}
-        >
-          <div style={cardStyle}>
-            <h2>Objekt & Finanzierung</h2>
+const input: React.CSSProperties = { width: "100%", padding: 10, borderRadius: 10, border: "1px solid #d1d5db", boxSizing: "border-box", fontSize: 16, };
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Kaufpreis (€)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={kaufpreis}
-                onChange={(e) => setKaufpreis(Number(e.target.value))}
-              />
-            </div>
+const label: React.CSSProperties = { display: "block", marginBottom: 6, fontWeight: 600, };
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Kaufnebenkosten (%)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                step="0.1"
-                value={nebenkostenProzent}
-                onChange={(e) => setNebenkostenProzent(Number(e.target.value))}
-              />
-            </div>
+const summaryCard = (title: string, value: string, sub?: string) => ( <div style={card}> <div style={{ color: "#6b7280", fontSize: 14 }}>{title}</div> <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>{value}</div> {sub ? <div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>{sub}</div> : null} </div> );
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Renovierung (€)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={renovierung}
-                onChange={(e) => setRenovierung(Number(e.target.value))}
-              />
-            </div>
+const maxBalance = Math.max(...result.yearlyRows.map((r) => r.balance), 1);
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Eigenkapital (€)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={eigenkapital}
-                onChange={(e) => setEigenkapital(Number(e.target.value))}
-              />
-            </div>
+return ( <main style={{ minHeight: "100vh", background: "#f3f4f6", padding: 20, fontFamily: "Arial, sans-serif" }}> <div style={{ maxWidth: 1300, margin: "0 auto" }}> <h1 style={{ fontSize: 34, marginBottom: 8 }}>Immobilien- & Finanzierungsrechner</h1> <p style={{ color: "#4b5563", marginBottom: 24 }}> Mit Laufzeit, Tilgungsplan, Restschuldverlauf und Vermietungskennzahlen. </p>
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Zins p.a. (%)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                step="0.01"
-                value={zins}
-                onChange={(e) => setZins(Number(e.target.value))}
-              />
-            </div>
-
-            <div>
-              <label style={labelStyle}>Anfängliche Tilgung p.a. (%)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                step="0.01"
-                value={tilgung}
-                onChange={(e) => setTilgung(Number(e.target.value))}
-              />
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <h2>Vermietung</h2>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Kaltmiete pro Monat (€)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={kaltmieteMonat}
-                onChange={(e) => setKaltmieteMonat(Number(e.target.value))}
-              />
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>
-                Nicht umlagefähige Kosten pro Monat (€)
-              </label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={nichtUmlagefaehigMonat}
-                onChange={(e) =>
-                  setNichtUmlagefaehigMonat(Number(e.target.value))
-                }
-              />
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={labelStyle}>Rücklage pro Monat (€)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                value={ruecklageMonat}
-                onChange={(e) => setRuecklageMonat(Number(e.target.value))}
-              />
-            </div>
-
-            <div>
-              <label style={labelStyle}>Leerstand (%)</label>
-              <input
-                style={inputStyle}
-                type="number"
-                step="0.1"
-                value={leerstandProzent}
-                onChange={(e) => setLeerstandProzent(Number(e.target.value))}
-              />
-            </div>
-          </div>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20, marginBottom: 20 }}>
+      <div style={card}>
+        <h2>Objekt</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Kaufpreis (€)</label>
+          <input style={input} type="number" value={purchasePrice} onChange={(e) => setPurchasePrice(Number(e.target.value))} />
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 16,
-          }}
-        >
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Gesamtprojektkosten</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {euro(calc.gesamtProjektkosten)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Darlehenssumme</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {euro(calc.darlehen)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Monatliche Rate</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {euro(calc.monatlicheRate)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Eigenkapitalquote</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {percent(calc.eigenkapitalQuote)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Bruttomietrendite</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {percent(calc.bruttoRendite)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Nettomietrendite</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {percent(calc.nettoRendite)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Jahresrate</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {euro(calc.jahresRate)}
-            </div>
-          </div>
-
-          <div style={cardStyle}>
-            <div style={{ color: "#6b7280", fontSize: 14 }}>Cashflow vor Steuer</div>
-            <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {euro(calc.cashflowVorSteuer)}
-            </div>
-          </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Kaufnebenkosten (%)</label>
+          <input style={input} type="number" step="0.1" value={purchaseCostsPercent} onChange={(e) => setPurchaseCostsPercent(Number(e.target.value))} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Renovierung (€)</label>
+          <input style={input} type="number" value={renovation} onChange={(e) => setRenovation(Number(e.target.value))} />
+        </div>
+        <div>
+          <label style={label}>Eigenkapital (€)</label>
+          <input style={input} type="number" value={equity} onChange={(e) => setEquity(Number(e.target.value))} />
         </div>
       </div>
-    </main>
-  );
-}
+
+      <div style={card}>
+        <h2>Finanzierung</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Berechnungsart</label>
+          <select style={input} value={calculationMode} onChange={(e) => setCalculationMode(e.target.value as "rate" | "duration")}>
+            <option value="duration">Rate vorgeben → Laufzeit berechnen</option>
+            <option value="rate">Laufzeit vorgeben → Rate berechnen</option>
+          </select>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Sollzins p.a. (%)</label>
+          <input style={input} type="number" step="0.01" value={annualRate} onChange={(e) => setAnnualRate(Number(e.target.value))} />
+        </div>
+
+        {calculationMode === "duration" ? (
+          <>
+            <div style={{ marginBottom: 14 }}>
+              <label style={label}>Anfängliche Tilgung p.a. (%)</label>
+              <input style={input} type="number" step="0.01" value={initialRepayment} onChange={(e) => setInitialRepayment(Number(e.target.value))} />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={label}>Optionale manuelle Monatsrate (€)</label>
+              <input style={input} type="number" value={manualMonthlyPayment} onChange={(e) => setManualMonthlyPayment(Number(e.target.value))} />
+            </div>
+          </>
+        ) : (
+          <div style={{ marginBottom: 14 }}>
+            <label style={label}>Gewünschte Laufzeit (Jahre)</label>
+            <input style={input} type="number" step="1" value={targetYears} onChange={(e) => setTargetYears(Number(e.target.value))} />
+          </div>
+        )}
+
+        <div>
+          <label style={label}>Sondertilgung pro Jahr (€)</label>
+          <input style={input} type="number" value={annualExtraPayment} onChange={(e) => setAnnualExtraPayment(Number(e.target.value))} />
+        </div>
+      </div>
+
+      <div style={card}>
+        <h2>Vermietung</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Kaltmiete pro Monat (€)</label>
+          <input style={input} type="number" value={monthlyRentCold} onChange={(e) => setMonthlyRentCold(Number(e.target.value))} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Nicht umlagefähige Kosten pro Monat (€)</label>
+          <input style={input} type="number" value={monthlyNonApportionableCosts} onChange={(e) => setMonthlyNonApportionableCosts(Number(e.target.value))} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Rücklage pro Monat (€)</label>
+          <input style={input} type="number" value={monthlyReserve} onChange={(e) => setMonthlyReserve(Number(e.target.value))} />
+        </div>
+        <div>
+          <label style={label}>Leerstand (%)</label>
+          <input style={input} type="number" step="0.1" value={vacancyPercent} onChange={(e) => setVacancyPercent(Number(e.target.value))} />
+        </div>
+      </div>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 20 }}>
+      {summaryCard("Gesamtprojektkosten", euro(result.projectCost))}
+      {summaryCard("Darlehenssumme", euro(result.loanAmount))}
+      {summaryCard("Monatsrate", Number.isFinite(result.monthlyPayment) ? euro(result.monthlyPayment) : "nicht möglich")}
+      {summaryCard("Laufzeit", Number.isFinite(result.months) ? `${result.years} J ${result.remainingMonths} M` : "Rate zu niedrig")}
+      {summaryCard("Gesamtzins", Number.isFinite(result.totalInterest) ? euro(result.totalInterest) : "unendlich")}
+      {summaryCard("Gesamtauszahlung", Number.isFinite(result.totalPayment) ? euro(result.totalPayment) : "unendlich")}
+      {summaryCard("Bruttorendite", `${num(result.grossYield)} %`)}
+      {summaryCard("Cashflow vor Steuer", euro(result.cashflowBeforeTax), `Jahresrate ${euro(result.annualDebtService)}`)}
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 20, marginBottom: 20 }}>
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Restschuldverlauf</h2>
+        <div style={{ display: "flex", alignItems: "end", gap: 6, height: 220, overflowX: "auto", paddingTop: 10 }}>
+          {result.yearlyRows.slice(0, 40).map((r) => (
+            <div key={r.year} style={{ minWidth: 24, textAlign: "center" }}>
+              <div
+                title={`Jahr ${r.year}: ${euro(r.balance)}`}
+                style={{
+                  height: `${Math.max(6, (r.balance / maxBalance) * 180)}px`,
+                  background: "#1f2937",
+                  borderRadius: 6,
+                  marginBottom: 6,
+                }}
+              />
+              <div style={{ fontSize: 11, color: "#6b7280" }}>{r.year}</div>
+            </div>
+          ))}
+        </div>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 10 }}>
+          Balken zeigen die Restschuld pro Jahr. Damit siehst du den zeitlichen Verlauf der Finanzierung direkt.
+        </p>
+      </div>
+
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Jahr 1 im Überblick</h2>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div><strong>Kaltmiete p.a.:</strong> {euro(result.annualColdRent)}</div>
+          <div><strong>Nettomiete nach Leerstand:</strong> {euro(result.annualNetRent)}</div>
+          <div><strong>Eigentümerkosten p.a.:</strong> {euro(result.annualOwnerCosts)}</div>
+          <div><strong>Nettomietrendite:</strong> {num(result.netYield)} %</div>
+          <div><strong>Kaufnebenkosten:</strong> {euro(result.purchaseCosts)}</div>
+          <div><strong>Restschuld nach Jahr 1:</strong> {result.yearlyRows[0] ? euro(result.yearlyRows[0].balance) : euro(0)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style={card}>
+      <h2 style={{ marginTop: 0 }}>Tilgungsplan ähnlich Kreditrechner</h2>
+      <p style={{ color: "#6b7280", marginTop: 0 }}>
+        Jahresübersicht mit Rate, Zinsen, Tilgung, Sondertilgung und Restschuld. Das orientiert sich an einem klassischen Annuitäten- bzw. Kreditrechner mit Tilgungsplan, Laufzeit und Restschuld. ([zinsen-berechnen.de](https://www.zinsen-berechnen.de/kreditrechner.php?utm_source=chatgpt.com))
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ background: "#e5e7eb" }}>
+              <th style={{ padding: 10, textAlign: "left" }}>Jahr</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Rate</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Zinsen</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Tilgung</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Sondertilgung</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Restschuld</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.yearlyRows.slice(0, 40).map((r) => (
+              <tr key={r.year} style={{ borderTop: "1px solid #e5e7eb" }}>
+                <td style={{ padding: 10 }}>{r.year}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.payment)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.interest)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.principal)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.extra)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+); }
