@@ -2,684 +2,335 @@
 
 import React, { useMemo, useState } from "react";
 
-type YearRow = {
-  year: number;
-  payment: number;
-  interest: number;
-  principal: number;
-  extra: number;
-  rentalIncome: number;
-  ownerCosts: number;
-  cashflow: number;
-  balance: number;
+type YearRow = { year: number; payment: number; interest: number; principal: number; extra: number; rentNet: number; ownerCosts: number; taxableRentalIncome: number; taxOnRentalIncome: number; cashflowAfterTax: number; balance: number; };
+
+function parseNumber(v: string) { return Number(v.replace(/./g, "").replace(",", ".")) || 0; }
+
+function formatNumber(n: number) { return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0, }).format(Math.round(n)); }
+
+function euro(value: number) { return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0, }).format(value); }
+
+function percent(value: number) { return new Intl.NumberFormat("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2, }).format(value) + " %"; }
+
+function yearsMonths(totalMonths: number) { if (!Number.isFinite(totalMonths)) return "nicht tilgbar"; const y = Math.floor(totalMonths / 12); const m = totalMonths % 12; return ${y} J ${m} M; }
+
+function calculateRequiredMonthlyPayment( loanAmount: number, annualRate: number, years: number, targetBalance: number ) { const months = Math.max(1, Math.round(years * 12)); const r = annualRate / 100 / 12; const balloon = Math.max(0, targetBalance);
+
+if (loanAmount <= 0) return 0; if (r === 0) return Math.max(0, (loanAmount - balloon) / months);
+
+const factor = Math.pow(1 + r, months); return ((loanAmount * factor - balloon) * r) / (factor - 1); }
+
+function calculateFullRepaymentMonths( loanAmount: number, annualRate: number, monthlyPayment: number, annualExtraPayment: number ) { const monthlyRate = annualRate / 100 / 12; let balance = Math.max(0, loanAmount); let month = 0;
+
+if (balance <= 0) return 0; if (monthlyRate > 0 && monthlyPayment <= balance * monthlyRate) return Infinity;
+
+while (balance > 0.01 && month < 2400) { month += 1; const interest = monthlyRate > 0 ? balance * monthlyRate : 0; let principal = monthlyPayment - interest; if (principal < 0) principal = 0; if (principal > balance) principal = balance; balance -= principal;
+
+if (annualExtraPayment > 0 && month % 12 === 0 && balance > 0) {
+  const extra = Math.min(annualExtraPayment, balance);
+  balance -= extra;
+}
+
+}
+
+return balance <= 0.01 ? month : Infinity; }
+
+function simulateYears(params: { loanAmount: number; annualRate: number; monthlyPayment: number; annualExtraPayment: number; years: number; rentNetAnnual: number; ownerCostsAnnual: number; depreciationAnnual: number; taxRate: number; }) { const { loanAmount, annualRate, monthlyPayment, annualExtraPayment, years, rentNetAnnual, ownerCostsAnnual, depreciationAnnual, taxRate, } = params;
+
+const monthlyRate = annualRate / 100 / 12; const totalMonths = Math.max(1, Math.round(years * 12)); let balance = Math.max(0, loanAmount); let totalInterest = 0; let totalPayment = 0; let totalExtra = 0; const rows: YearRow[] = [];
+
+for (let year = 1; year <= years; year += 1) { let paymentYear = 0; let interestYear = 0; let principalYear = 0; let extraYear = 0;
+
+for (let m = 1; m <= 12; m += 1) {
+  const absoluteMonth = (year - 1) * 12 + m;
+  if (absoluteMonth > totalMonths || balance <= 0.01) break;
+
+  const interest = monthlyRate > 0 ? balance * monthlyRate : 0;
+  let principal = monthlyPayment - interest;
+  if (principal < 0) principal = 0;
+  if (principal > balance) principal = balance;
+
+  const payment = interest + principal;
+  balance -= principal;
+
+  paymentYear += payment;
+  interestYear += interest;
+  principalYear += principal;
+  totalInterest += interest;
+  totalPayment += payment;
+}
+
+if (annualExtraPayment > 0 && balance > 0) {
+  const extra = Math.min(annualExtraPayment, balance);
+  balance -= extra;
+  extraYear += extra;
+  totalExtra += extra;
+  totalPayment += extra;
+}
+
+const taxableRentalIncome = rentNetAnnual - ownerCostsAnnual - interestYear - depreciationAnnual;
+const taxOnRentalIncome = taxableRentalIncome > 0 ? taxableRentalIncome * (taxRate / 100) : 0;
+const cashflowAfterTax = rentNetAnnual - ownerCostsAnnual - paymentYear - extraYear - taxOnRentalIncome;
+
+rows.push({
+  year,
+  payment: paymentYear,
+  interest: interestYear,
+  principal: principalYear,
+  extra: extraYear,
+  rentNet: rentNetAnnual,
+  ownerCosts: ownerCostsAnnual,
+  taxableRentalIncome,
+  taxOnRentalIncome,
+  cashflowAfterTax,
+  balance: Math.max(0, balance),
+});
+
+}
+
+return { rows, remainingBalance: Math.max(0, balance), totalInterest, totalPayment, totalExtra, }; }
+
+export default function Page() { const [purchasePrice, setPurchasePrice] = useState("320.000"); const [purchaseCostsPercent, setPurchaseCostsPercent] = useState("10"); const [renovation, setRenovation] = useState("15.000"); const [equity, setEquity] = useState("70.000");
+
+const [annualRate, setAnnualRate] = useState("4"); const [initialRepayment, setInitialRepayment] = useState("1,5"); const [annualExtraPayment, setAnnualExtraPayment] = useState("0"); const [manualMonthlyPayment, setManualMonthlyPayment] = useState("");
+
+const [fixedYears, setFixedYears] = useState("10"); const [targetBalance, setTargetBalance] = useState("0");
+
+const [monthlyRentCold, setMonthlyRentCold] = useState("1.150"); const [monthlyNonApportionableCosts, setMonthlyNonApportionableCosts] = useState("85"); const [monthlyReserve, setMonthlyReserve] = useState("45"); const [depreciationAnnual, setDepreciationAnnual] = useState("5.120"); const [personalTaxRate, setPersonalTaxRate] = useState("35");
+
+const calc = useMemo(() => { const kp = parseNumber(purchasePrice); const nkp = parseNumber(purchaseCostsPercent); const ren = parseNumber(renovation); const eq = parseNumber(equity); const z = parseNumber(annualRate); const t = parseNumber(initialRepayment); const extra = parseNumber(annualExtraPayment); const manualRate = parseNumber(manualMonthlyPayment); const years = Math.max(1, Math.round(parseNumber(fixedYears))); const balloon = parseNumber(targetBalance);
+
+const rentAnnual = parseNumber(monthlyRentCold) * 12;
+const ownerCostsAnnual = (parseNumber(monthlyNonApportionableCosts) + parseNumber(monthlyReserve)) * 12;
+const depreciation = parseNumber(depreciationAnnual);
+const taxRate = parseNumber(personalTaxRate);
+
+const purchaseCosts = kp * (nkp / 100);
+const projectCost = kp + purchaseCosts + ren;
+const loan = Math.max(0, projectCost - eq);
+
+let monthlyRate = loan * ((z + t) / 100) / 12;
+if (manualRate > 0) monthlyRate = manualRate;
+
+const fullRepaymentMonths = calculateFullRepaymentMonths(loan, z, monthlyRate, extra);
+const fixedTermMonthlyPayment = calculateRequiredMonthlyPayment(loan, z, years, balloon);
+
+const preview = simulateYears({
+  loanAmount: loan,
+  annualRate: z,
+  monthlyPayment: monthlyRate,
+  annualExtraPayment: extra,
+  years,
+  rentNetAnnual: rentAnnual,
+  ownerCostsAnnual,
+  depreciationAnnual: depreciation,
+  taxRate,
+});
+
+const fixedTermPreview = simulateYears({
+  loanAmount: loan,
+  annualRate: z,
+  monthlyPayment: fixedTermMonthlyPayment,
+  annualExtraPayment: extra,
+  years,
+  rentNetAnnual: rentAnnual,
+  ownerCostsAnnual,
+  depreciationAnnual: depreciation,
+  taxRate,
+});
+
+const taxableRentalYear1 = preview.rows[0]?.taxableRentalIncome ?? 0;
+const taxYear1 = preview.rows[0]?.taxOnRentalIncome ?? 0;
+
+return {
+  purchaseCosts,
+  projectCost,
+  loan,
+  monthlyRate,
+  fullRepaymentMonths,
+  fixedTermMonthlyPayment,
+  years,
+  balloon,
+  rentAnnual,
+  ownerCostsAnnual,
+  depreciation,
+  taxRate,
+  taxableRentalYear1,
+  taxYear1,
+  annualExtraPaymentValue: extra,
+  preview,
+  fixedTermPreview,
 };
 
-function parseDeNumber(input: string): number {
-  if (!input || input.trim() === "") return 0;
-  const cleaned = input.replace(/\s/g, "").replace(/\./g, "").replace(/,/g, ".");
-  const value = Number(cleaned);
-  return Number.isFinite(value) ? value : 0;
-}
+}, [ purchasePrice, purchaseCostsPercent, renovation, equity, annualRate, initialRepayment, annualExtraPayment, manualMonthlyPayment, fixedYears, targetBalance, monthlyRentCold, monthlyNonApportionableCosts, monthlyReserve, depreciationAnnual, personalTaxRate, ]);
 
-function formatMoneyInput(value: number): string {
-  return new Intl.NumberFormat("de-DE", {
-    maximumFractionDigits: 0,
-  }).format(Math.round(value));
-}
+const card: React.CSSProperties = { background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 2px 14px rgba(0,0,0,0.08)", };
 
-function euro(value: number): string {
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
+const input: React.CSSProperties = { width: "100%", padding: 10, borderRadius: 10, border: "1px solid #d1d5db", boxSizing: "border-box", fontSize: 16, };
 
-function percent(value: number): string {
-  return `${new Intl.NumberFormat("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value)} %`;
-}
+const label: React.CSSProperties = { display: "block", marginBottom: 6, fontWeight: 600, };
 
-function yearsAndMonths(totalMonths: number): string {
-  if (!Number.isFinite(totalMonths)) return "nicht tilgbar";
-  const years = Math.floor(totalMonths / 12);
-  const months = totalMonths % 12;
-  return `${years} J ${months} M`;
-}
+function handleFocus(setter: (v: string) => void) { return (e: React.FocusEvent<HTMLInputElement>) => { if (e.target.value === "0") setter(""); }; }
 
-function MoneyField({
-  label,
-  value,
-  setValue,
-}: {
-  label: string;
-  value: string;
-  setValue: (value: string) => void;
-}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={styles.label}>{label}</label>
-      <input
-        style={styles.input}
-        type="text"
-        inputMode="numeric"
-        value={value}
-        onChange={(e) => {
-          const raw = e.target.value.replace(/[^0-9.,]/g, "");
-          setValue(raw);
-        }}
-        onFocus={() => {
-          if (value === "0") setValue("");
-        }}
-        onBlur={() => {
-          const parsed = parseDeNumber(value);
-          setValue(parsed === 0 ? "0" : formatMoneyInput(parsed));
-        }}
-      />
-    </div>
-  );
-}
+function handleBlur(setter: (v: string) => void) { return (e: React.FocusEvent<HTMLInputElement>) => { const v = parseNumber(e.target.value); setter(formatNumber(v)); }; }
 
-function PercentField({
-  label,
-  value,
-  setValue,
-}: {
-  label: string;
-  value: string;
-  setValue: (value: string) => void;
-}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={styles.label}>{label}</label>
-      <input
-        style={styles.input}
-        type="text"
-        inputMode="decimal"
-        value={value}
-        onChange={(e) => {
-          const raw = e.target.value.replace(/[^0-9.,]/g, "");
-          setValue(raw);
-        }}
-        onFocus={() => {
-          if (value === "0" || value === "0,0" || value === "0,00") setValue("");
-        }}
-      />
-    </div>
-  );
-}
+const maxBalance = Math.max(...calc.preview.rows.map((r) => r.balance), 1);
 
-function IntField({
-  label,
-  value,
-  setValue,
-}: {
-  label: string;
-  value: string;
-  setValue: (value: string) => void;
-}) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={styles.label}>{label}</label>
-      <input
-        style={styles.input}
-        type="text"
-        inputMode="numeric"
-        value={value}
-        onChange={(e) => {
-          const raw = e.target.value.replace(/[^0-9]/g, "");
-          setValue(raw);
-        }}
-        onFocus={() => {
-          if (value === "0") setValue("");
-        }}
-        onBlur={() => {
-          const parsed = parseDeNumber(value);
-          setValue(String(Math.max(1, Math.round(parsed))));
-        }}
-      />
-    </div>
-  );
-}
+return ( <main style={{ minHeight: "100vh", background: "#f3f4f6", padding: 20, fontFamily: "Arial" }}> <div style={{ maxWidth: 1400, margin: "0 auto" }}> <h1 style={{ fontSize: 34, marginBottom: 8 }}>Finanzierungsrechner</h1> <p style={{ color: "#6b7280", marginBottom: 20 }}> Du siehst sowohl die vollständige Laufzeit bis zur kompletten Tilgung als auch eine Vorschau für z. B. 10 Jahre mit optionaler offener Restschuld. </p>
 
-function calculateRequiredMonthlyPayment(
-  loanAmount: number,
-  annualRate: number,
-  years: number,
-  balloonPayment: number
-): number {
-  const months = Math.max(1, Math.round(years * 12));
-  const monthlyRate = annualRate / 100 / 12;
-  const targetRemaining = Math.max(0, balloonPayment);
-
-  if (loanAmount <= 0) return 0;
-
-  if (monthlyRate === 0) {
-    return Math.max(0, (loanAmount - targetRemaining) / months);
-  }
-
-  const factor = Math.pow(1 + monthlyRate, months);
-  return ((loanAmount * factor - targetRemaining) * monthlyRate) / (factor - 1);
-}
-
-function simulateLoan({
-  loanAmount,
-  annualRate,
-  monthlyPayment,
-  annualExtraPayment,
-  fixedYears,
-  balloonPayment,
-  annualRentalIncome,
-  annualOwnerCosts,
-}: {
-  loanAmount: number;
-  annualRate: number;
-  monthlyPayment: number;
-  annualExtraPayment: number;
-  fixedYears: number;
-  balloonPayment: number;
-  annualRentalIncome: number;
-  annualOwnerCosts: number;
-}) {
-  const monthlyRate = annualRate / 100 / 12;
-  const maxMonths = Math.max(1, Math.round(fixedYears * 12));
-  let balance = Math.max(0, loanAmount);
-  let totalInterest = 0;
-  let totalPayment = 0;
-  let totalExtra = 0;
-  const yearlyRows: YearRow[] = [];
-
-  if (loanAmount <= 0) {
-    return {
-      yearlyRows,
-      months: 0,
-      totalInterest: 0,
-      totalPayment: 0,
-      totalExtra: 0,
-      remainingBalance: 0,
-    };
-  }
-
-  let currentYear: YearRow = {
-    year: 1,
-    payment: 0,
-    interest: 0,
-    principal: 0,
-    extra: 0,
-    rentalIncome: annualRentalIncome,
-    ownerCosts: annualOwnerCosts,
-    cashflow: 0,
-    balance,
-  };
-
-  for (let month = 1; month <= maxMonths; month += 1) {
-    const interest = monthlyRate > 0 ? balance * monthlyRate : 0;
-    let principal = monthlyPayment - interest;
-
-    if (principal < 0) principal = 0;
-    if (principal > balance) principal = balance;
-
-    const payment = interest + principal;
-    balance -= principal;
-
-    let extra = 0;
-    if (annualExtraPayment > 0 && month % 12 === 0 && balance > balloonPayment) {
-      extra = Math.min(annualExtraPayment, Math.max(0, balance - balloonPayment));
-      balance -= extra;
-    }
-
-    totalInterest += interest;
-    totalPayment += payment + extra;
-    totalExtra += extra;
-
-    currentYear.payment += payment;
-    currentYear.interest += interest;
-    currentYear.principal += principal;
-    currentYear.extra += extra;
-    currentYear.balance = Math.max(0, balance);
-
-    const atYearEnd = month % 12 === 0 || month === maxMonths;
-    if (atYearEnd) {
-      currentYear.cashflow =
-        currentYear.rentalIncome -
-        currentYear.ownerCosts -
-        currentYear.payment -
-        currentYear.extra;
-
-      yearlyRows.push({ ...currentYear });
-
-      currentYear = {
-        year: currentYear.year + 1,
-        payment: 0,
-        interest: 0,
-        principal: 0,
-        extra: 0,
-        rentalIncome: annualRentalIncome,
-        ownerCosts: annualOwnerCosts,
-        cashflow: 0,
-        balance: Math.max(0, balance),
-      };
-    }
-  }
-
-  return {
-    yearlyRows,
-    months: maxMonths,
-    totalInterest,
-    totalPayment,
-    totalExtra,
-    remainingBalance: Math.max(0, balance),
-  };
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    background: "#f3f4f6",
-    padding: 20,
-    fontFamily: "Arial, sans-serif",
-  },
-  container: {
-    maxWidth: 1400,
-    margin: "0 auto",
-  },
-  card: {
-    background: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    boxShadow: "0 2px 14px rgba(0,0,0,0.08)",
-  },
-  input: {
-    width: "100%",
-    padding: 10,
-    borderRadius: 10,
-    border: "1px solid #d1d5db",
-    boxSizing: "border-box",
-    fontSize: 16,
-  },
-  label: {
-    display: "block",
-    marginBottom: 6,
-    fontWeight: 600,
-  },
-  tableCell: {
-    padding: 10,
-    borderTop: "1px solid #e5e7eb",
-    textAlign: "right",
-    whiteSpace: "nowrap",
-  },
-};
-
-export default function Page() {
-  const [purchasePrice, setPurchasePrice] = useState("320.000");
-  const [purchaseCostsPercent, setPurchaseCostsPercent] = useState("10");
-  const [renovation, setRenovation] = useState("15.000");
-  const [equity, setEquity] = useState("70.000");
-
-  const [annualRate, setAnnualRate] = useState("4");
-  const [initialRepayment, setInitialRepayment] = useState("1,5");
-  const [annualExtraPayment, setAnnualExtraPayment] = useState("0");
-
-  const [mode, setMode] = useState<"annuity" | "fixed-term">("annuity");
-  const [manualMonthlyPayment, setManualMonthlyPayment] = useState("");
-  const [fixedYears, setFixedYears] = useState("10");
-  const [balloonPayment, setBalloonPayment] = useState("0");
-
-  const [monthlyRentCold, setMonthlyRentCold] = useState("1.150");
-  const [monthlyNonApportionableCosts, setMonthlyNonApportionableCosts] = useState("85");
-  const [monthlyReserve, setMonthlyReserve] = useState("45");
-  const [vacancyPercent, setVacancyPercent] = useState("2");
-
-  const result = useMemo(() => {
-    const kp = parseDeNumber(purchasePrice);
-    const nkp = parseDeNumber(purchaseCostsPercent);
-    const ren = parseDeNumber(renovation);
-    const eq = parseDeNumber(equity);
-    const zins = parseDeNumber(annualRate);
-    const tilgung = parseDeNumber(initialRepayment);
-    const sonder = parseDeNumber(annualExtraPayment);
-    const manualRate = parseDeNumber(manualMonthlyPayment);
-    const years = Math.max(1, parseDeNumber(fixedYears));
-    const balloon = parseDeNumber(balloonPayment);
-
-    const rentMonth = parseDeNumber(monthlyRentCold);
-    const nonAllocMonth = parseDeNumber(monthlyNonApportionableCosts);
-    const reserveMonth = parseDeNumber(monthlyReserve);
-    const vacancy = parseDeNumber(vacancyPercent);
-
-    const purchaseCosts = kp * (nkp / 100);
-    const projectCost = kp + purchaseCosts + ren;
-    const loanAmount = Math.max(0, projectCost - eq);
-
-    const annualColdRent = rentMonth * 12;
-    const annualVacancyLoss = annualColdRent * (vacancy / 100);
-    const annualNetRent = annualColdRent - annualVacancyLoss;
-    const annualOwnerCosts = nonAllocMonth * 12 + reserveMonth * 12;
-
-    let monthlyPayment = 0;
-    if (mode === "annuity") {
-      monthlyPayment = loanAmount * ((zins + tilgung) / 100) / 12;
-      if (manualRate > 0) monthlyPayment = manualRate;
-    } else {
-      monthlyPayment = calculateRequiredMonthlyPayment(
-        loanAmount,
-        zins,
-        years,
-        balloon
-      );
-    }
-
-    const simulation = simulateLoan({
-      loanAmount,
-      annualRate: zins,
-      monthlyPayment,
-      annualExtraPayment: sonder,
-      fixedYears: years,
-      balloonPayment: balloon,
-      annualRentalIncome: annualNetRent,
-      annualOwnerCosts,
-    });
-
-    const annualDebtService = monthlyPayment * 12 + sonder;
-    const cashflowBeforeTax = annualNetRent - annualOwnerCosts - annualDebtService;
-    const grossYield = kp > 0 ? (annualColdRent / kp) * 100 : 0;
-    const netYield =
-      projectCost > 0
-        ? ((annualNetRent - annualOwnerCosts) / projectCost) * 100
-        : 0;
-    const equityRatio = projectCost > 0 ? (eq / projectCost) * 100 : 0;
-
-    return {
-      purchaseCosts,
-      projectCost,
-      loanAmount,
-      monthlyPayment,
-      annualColdRent,
-      annualNetRent,
-      annualOwnerCosts,
-      annualDebtService,
-      annualVacancyLoss,
-      cashflowBeforeTax,
-      grossYield,
-      netYield,
-      equityRatio,
-      fixedYearsNumeric: years,
-      balloon,
-      ...simulation,
-    };
-  }, [
-    purchasePrice,
-    purchaseCostsPercent,
-    renovation,
-    equity,
-    annualRate,
-    initialRepayment,
-    annualExtraPayment,
-    mode,
-    manualMonthlyPayment,
-    fixedYears,
-    balloonPayment,
-    monthlyRentCold,
-    monthlyNonApportionableCosts,
-    monthlyReserve,
-    vacancyPercent,
-  ]);
-
-  const maxBalance = Math.max(...result.yearlyRows.map((r) => r.balance), 1);
-
-  const summaryCard = (title: string, value: string, sub?: string) => (
-    <div style={styles.card}>
-      <div style={{ color: "#6b7280", fontSize: 14 }}>{title}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>{value}</div>
-      {sub ? <div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>{sub}</div> : null}
-    </div>
-  );
-
-  return (
-    <main style={styles.page}>
-      <div style={styles.container}>
-        <h1 style={{ fontSize: 34, marginBottom: 8 }}>
-          Immobilien- & Finanzierungsrechner
-        </h1>
-        <p style={{ color: "#4b5563", marginBottom: 24 }}>
-          Mit Dauer des Darlehens, offener Schlussrate, Mieteinnahmen, Cashflow und Tilgungsplan.
-        </p>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: 20,
-            marginBottom: 20,
-          }}
-        >
-          <div style={styles.card}>
-            <h2>Objekt</h2>
-            <MoneyField label="Kaufpreis (€)" value={purchasePrice} setValue={setPurchasePrice} />
-            <PercentField
-              label="Kaufnebenkosten (%)"
-              value={purchaseCostsPercent}
-              setValue={setPurchaseCostsPercent}
-            />
-            <MoneyField label="Renovierung (€)" value={renovation} setValue={setRenovation} />
-            <MoneyField label="Eigenkapital (€)" value={equity} setValue={setEquity} />
-          </div>
-
-          <div style={styles.card}>
-            <h2>Finanzierung</h2>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={styles.label}>Berechnungsart</label>
-              <select
-                style={styles.input}
-                value={mode}
-                onChange={(e) => setMode(e.target.value as "annuity" | "fixed-term")}
-              >
-                <option value="annuity">Annuität aus Zins + Tilgung</option>
-                <option value="fixed-term">
-                  Feste Darlehensdauer mit optionaler Schlussrate
-                </option>
-              </select>
-            </div>
-
-            <PercentField label="Zins p.a. (%)" value={annualRate} setValue={setAnnualRate} />
-            <PercentField
-              label="Tilgung p.a. (%)"
-              value={initialRepayment}
-              setValue={setInitialRepayment}
-            />
-            <MoneyField
-              label="Sondertilgung pro Jahr (€)"
-              value={annualExtraPayment}
-              setValue={setAnnualExtraPayment}
-            />
-            <IntField
-              label="Dauer des Darlehens (Jahre)"
-              value={fixedYears}
-              setValue={setFixedYears}
-            />
-            <MoneyField
-              label="Offene Schlussrate / Restschuld (€)"
-              value={balloonPayment}
-              setValue={setBalloonPayment}
-            />
-
-            {mode === "annuity" ? (
-              <MoneyField
-                label="Optionale manuelle Monatsrate (€)"
-                value={manualMonthlyPayment}
-                setValue={setManualMonthlyPayment}
-              />
-            ) : null}
-          </div>
-
-          <div style={styles.card}>
-            <h2>Mieteinnahmen</h2>
-            <MoneyField
-              label="Kaltmiete pro Monat (€)"
-              value={monthlyRentCold}
-              setValue={setMonthlyRentCold}
-            />
-            <MoneyField
-              label="Nicht umlagefähige Kosten pro Monat (€)"
-              value={monthlyNonApportionableCosts}
-              setValue={setMonthlyNonApportionableCosts}
-            />
-            <MoneyField
-              label="Rücklage pro Monat (€)"
-              value={monthlyReserve}
-              setValue={setMonthlyReserve}
-            />
-            <PercentField
-              label="Leerstand (%)"
-              value={vacancyPercent}
-              setValue={setVacancyPercent}
-            />
-          </div>
+<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20, marginTop: 20 }}>
+      <div style={card}>
+        <h2>Objekt</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Kaufpreis</label>
+          <input style={input} value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} onFocus={handleFocus(setPurchasePrice)} onBlur={handleBlur(setPurchasePrice)} />
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 16,
-            marginBottom: 20,
-          }}
-        >
-          {summaryCard("Gesamtprojektkosten", euro(result.projectCost))}
-          {summaryCard("Darlehenssumme", euro(result.loanAmount))}
-          {summaryCard("Monatsrate", euro(result.monthlyPayment))}
-          {summaryCard(
-            "Dauer des Darlehens",
-            yearsAndMonths(result.months),
-            `${result.fixedYearsNumeric} Jahre eingestellt`
-          )}
-          {summaryCard(
-            "Schlussrate / Restschuld",
-            euro(result.remainingBalance),
-            result.balloon > 0
-              ? `Ziel-Schlussrate ${euro(result.balloon)}`
-              : "vollständige Tilgung angestrebt"
-          )}
-          {summaryCard("Gesamtzins bis Laufzeitende", euro(result.totalInterest))}
-          {summaryCard(
-            "Mieteinnahmen netto p.a.",
-            euro(result.annualNetRent),
-            `${euro(result.annualVacancyLoss)} Leerstand`
-          )}
-          {summaryCard(
-            "Cashflow vor Steuer p.a.",
-            euro(result.cashflowBeforeTax),
-            `Belastung p.a. ${euro(result.annualDebtService)}`
-          )}
-          {summaryCard("Bruttomietrendite", percent(result.grossYield))}
-          {summaryCard("Nettomietrendite", percent(result.netYield))}
-          {summaryCard("Eigenkapitalquote", percent(result.equityRatio))}
-          {summaryCard("Sondertilgung gesamt", euro(result.totalExtra))}
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Nebenkosten %</label>
+          <input style={input} value={purchaseCostsPercent} onChange={(e) => setPurchaseCostsPercent(e.target.value)} />
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1.2fr 1fr",
-            gap: 20,
-            marginBottom: 20,
-          }}
-        >
-          <div style={styles.card}>
-            <h2 style={{ marginTop: 0 }}>Restschuldverlauf</h2>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "end",
-                gap: 6,
-                height: 230,
-                overflowX: "auto",
-                paddingTop: 10,
-              }}
-            >
-              {result.yearlyRows.map((row) => (
-                <div key={row.year} style={{ minWidth: 28, textAlign: "center" }}>
-                  <div
-                    title={`Jahr ${row.year}: ${euro(row.balance)}`}
-                    style={{
-                      height: `${Math.max(6, (row.balance / maxBalance) * 185)}px`,
-                      background: "#1f2937",
-                      borderRadius: 6,
-                      marginBottom: 6,
-                    }}
-                  />
-                  <div style={{ fontSize: 11, color: "#6b7280" }}>{row.year}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div style={styles.card}>
-            <h2 style={{ marginTop: 0 }}>Übersicht Jahr 1</h2>
-            <div style={{ display: "grid", gap: 12 }}>
-              <div>
-                <strong>Kaufnebenkosten:</strong> {euro(result.purchaseCosts)}
-              </div>
-              <div>
-                <strong>Netto-Mieteinnahmen p.a.:</strong> {euro(result.annualNetRent)}
-              </div>
-              <div>
-                <strong>Eigentümerkosten p.a.:</strong> {euro(result.annualOwnerCosts)}
-              </div>
-              <div>
-                <strong>Schuldendienst p.a.:</strong> {euro(result.annualDebtService)}
-              </div>
-              <div>
-                <strong>Restschuld nach Jahr 1:</strong>{" "}
-                {result.yearlyRows[0] ? euro(result.yearlyRows[0].balance) : euro(0)}
-              </div>
-              <div>
-                <strong>Cashflow Jahr 1:</strong>{" "}
-                {result.yearlyRows[0] ? euro(result.yearlyRows[0].cashflow) : euro(0)}
-              </div>
-            </div>
-          </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Renovierung</label>
+          <input style={input} value={renovation} onChange={(e) => setRenovation(e.target.value)} onFocus={handleFocus(setRenovation)} onBlur={handleBlur(setRenovation)} />
         </div>
-
-        <div style={styles.card}>
-          <h2 style={{ marginTop: 0 }}>Tilgungsplan</h2>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-              <thead>
-                <tr style={{ background: "#e5e7eb" }}>
-                  <th style={{ ...styles.tableCell, textAlign: "left", borderTop: "none" }}>
-                    Jahr
-                  </th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Rate</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Zinsen</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Tilgung</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Sondertilgung</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Miete netto</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Cashflow</th>
-                  <th style={{ ...styles.tableCell, borderTop: "none" }}>Restschuld</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.yearlyRows.map((row) => (
-                  <tr key={row.year}>
-                    <td style={{ ...styles.tableCell, textAlign: "left" }}>{row.year}</td>
-                    <td style={styles.tableCell}>{euro(row.payment)}</td>
-                    <td style={styles.tableCell}>{euro(row.interest)}</td>
-                    <td style={styles.tableCell}>{euro(row.principal)}</td>
-                    <td style={styles.tableCell}>{euro(row.extra)}</td>
-                    <td style={styles.tableCell}>{euro(row.rentalIncome)}</td>
-                    <td style={styles.tableCell}>{euro(row.cashflow)}</td>
-                    <td style={styles.tableCell}>{euro(row.balance)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div>
+          <label style={label}>Eigenkapital</label>
+          <input style={input} value={equity} onChange={(e) => setEquity(e.target.value)} onFocus={handleFocus(setEquity)} onBlur={handleBlur(setEquity)} />
         </div>
       </div>
-    </main>
-  );
-}
+
+      <div style={card}>
+        <h2>Finanzierung</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Zins %</label>
+          <input style={input} value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Tilgung %</label>
+          <input style={input} value={initialRepayment} onChange={(e) => setInitialRepayment(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Sondertilgung p.a.</label>
+          <input style={input} value={annualExtraPayment} onChange={(e) => setAnnualExtraPayment(e.target.value)} onFocus={handleFocus(setAnnualExtraPayment)} onBlur={handleBlur(setAnnualExtraPayment)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Optionale manuelle Monatsrate</label>
+          <input style={input} value={manualMonthlyPayment} onChange={(e) => setManualMonthlyPayment(e.target.value)} onFocus={handleFocus(setManualMonthlyPayment)} onBlur={handleBlur(setManualMonthlyPayment)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Vorgabedauer in Jahren</label>
+          <input style={input} value={fixedYears} onChange={(e) => setFixedYears(e.target.value)} />
+        </div>
+        <div>
+          <label style={label}>Gewünschte offene Restschuld / Schlussrate</label>
+          <input style={input} value={targetBalance} onChange={(e) => setTargetBalance(e.target.value)} onFocus={handleFocus(setTargetBalance)} onBlur={handleBlur(setTargetBalance)} />
+        </div>
+      </div>
+
+      <div style={card}>
+        <h2>Miete & Steuer</h2>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Kaltmiete pro Monat</label>
+          <input style={input} value={monthlyRentCold} onChange={(e) => setMonthlyRentCold(e.target.value)} onFocus={handleFocus(setMonthlyRentCold)} onBlur={handleBlur(setMonthlyRentCold)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Nicht umlagefähige Kosten pro Monat</label>
+          <input style={input} value={monthlyNonApportionableCosts} onChange={(e) => setMonthlyNonApportionableCosts(e.target.value)} onFocus={handleFocus(setMonthlyNonApportionableCosts)} onBlur={handleBlur(setMonthlyNonApportionableCosts)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Rücklage pro Monat</label>
+          <input style={input} value={monthlyReserve} onChange={(e) => setMonthlyReserve(e.target.value)} onFocus={handleFocus(setMonthlyReserve)} onBlur={handleBlur(setMonthlyReserve)} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={label}>Abschreibung / AfA pro Jahr</label>
+          <input style={input} value={depreciationAnnual} onChange={(e) => setDepreciationAnnual(e.target.value)} onFocus={handleFocus(setDepreciationAnnual)} onBlur={handleBlur(setDepreciationAnnual)} />
+        </div>
+        <div>
+          <label style={label}>Persönlicher Steuersatz %</label>
+          <input style={input} value={personalTaxRate} onChange={(e) => setPersonalTaxRate(e.target.value)} />
+        </div>
+      </div>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 20, marginTop: 20 }}>
+      <div style={card}><div style={{ color: "#6b7280" }}>Gesamtprojektkosten</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.projectCost)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Darlehen</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.loan)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Monatsrate aktuell</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.monthlyRate)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Gesamtlaufzeit bis 0 € Restschuld</div><div style={{ fontSize: 26, fontWeight: 700 }}>{yearsMonths(calc.fullRepaymentMonths)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Rate für {calc.years} Jahre</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.fixedTermMonthlyPayment)}</div><div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>mit Restschuld {euro(calc.balloon)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Steuerpflichtige Mieteinnahmen Jahr 1</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.taxableRentalYear1)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Steuer auf Mieteinnahmen Jahr 1</div><div style={{ fontSize: 26, fontWeight: 700 }}>{euro(calc.taxYear1)}</div></div>
+      <div style={card}><div style={{ color: "#6b7280" }}>Nettomietrendite</div><div style={{ fontSize: 26, fontWeight: 700 }}>{percent(calc.preview.rows.length ? ((calc.rentAnnual - calc.ownerCostsAnnual) / calc.projectCost) * 100 : 0)}</div></div>
+    </div>
+
+    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 20, marginTop: 20 }}>
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Restschuldverlauf für die aktuelle Monatsrate</h2>
+        <div style={{ display: "flex", alignItems: "end", gap: 6, height: 220, overflowX: "auto", paddingTop: 10 }}>
+          {calc.preview.rows.map((r) => (
+            <div key={r.year} style={{ minWidth: 24, textAlign: "center" }}>
+              <div
+                title={`Jahr ${r.year}: ${euro(r.balance)}`}
+                style={{
+                  height: `${Math.max(6, (r.balance / maxBalance) * 180)}px`,
+                  background: "#1f2937",
+                  borderRadius: 6,
+                  marginBottom: 6,
+                }}
+              />
+              <div style={{ fontSize: 11, color: "#6b7280" }}>{r.year}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={card}>
+        <h2 style={{ marginTop: 0 }}>Interpretation</h2>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div><strong>Ohne Schlussrate:</strong> Dann ist für dich die relevante Kennzahl die vollständige Laufzeit bis 0 € Restschuld.</div>
+          <div><strong>Mit 10 Jahren Vorgabe:</strong> Dann zeigt dir der Rechner, welche Rate nötig ist, um nach 10 Jahren genau die gewünschte Restschuld offen zu lassen.</div>
+          <div><strong>Zu versteuern:</strong> Vereinfacht = Netto-Mieteinnahmen minus nicht umlagefähige Kosten minus Zinsen minus AfA.</div>
+          <div><strong>Nicht enthalten:</strong> Leerstand wurde auf Wunsch entfernt.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{ ...card, marginTop: 20 }}>
+      <h2 style={{ marginTop: 0 }}>Tilgungsplan für die aktuelle Monatsrate</h2>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead>
+            <tr style={{ background: "#e5e7eb" }}>
+              <th style={{ padding: 10, textAlign: "left" }}>Jahr</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Rate</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Zinsen</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Tilgung</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Sondertilgung</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Zu versteuern</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Steuer</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Cashflow n. Steuer</th>
+              <th style={{ padding: 10, textAlign: "right" }}>Restschuld</th>
+            </tr>
+          </thead>
+          <tbody>
+            {calc.preview.rows.map((r) => (
+              <tr key={r.year} style={{ borderTop: "1px solid #e5e7eb" }}>
+                <td style={{ padding: 10 }}>{r.year}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.payment)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.interest)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.principal)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.extra)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.taxableRentalIncome)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.taxOnRentalIncome)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.cashflowAfterTax)}</td>
+                <td style={{ padding: 10, textAlign: "right" }}>{euro(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+); }
